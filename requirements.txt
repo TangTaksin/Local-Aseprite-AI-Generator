@@ -1,0 +1,28 @@
+# Local AI Generator for Aseprite - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core AI/ML libraries
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Diffusion and model libraries
+diffusers>=0.27.0
+transformers>=4.40.0
+accelerate>=0.29.0
+safetensors>=0.4.0
+peft>=0.11.0
+
+# Image processing
+pillow>=9.5.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+scipy>=1.10.0
+timm>=0.9.0
+
+# Web server
+flask>=2.3.0
+flask-cors>=4.0.0
+
+Optional: For better performance
+xformers>=0.0.20 
