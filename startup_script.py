@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Local AI Generator for Aseprite - Enhanced Startup Script
-Professional startup script with improved error handling and user experience.
-Version 2.0 - Ready for Publishing
+Local AI Generator สำหรับ Aseprite - สคริปต์เริ่มต้นที่ปรับปรุงใหม่
+สคริปต์เริ่มต้นระดับมืออาชีพพร้อมระบบจัดการข้อผิดพลาดและประสบการณ์ผู้ใช้ที่ดียิ่งขึ้น
+เวอร์ชัน 2.0 - พร้อมสำหรับการเผยแพร่
 """
 import sys
 import os
@@ -13,145 +13,145 @@ import time
 from pathlib import Path
 
 def print_banner():
-    """Display startup banner with version info."""
+    """แสดงแบนเนอร์เริ่มต้นพร้อมข้อมูลเวอร์ชัน"""
     print("\n" + "="*60)
     print("🎮 LOCAL AI GENERATOR FOR ASEPRITE v2.0")
-    print("🎨 Professional AI-Powered Pixel Art Generation")
+    print("🎨 การสร้าง Pixel Art ด้วย AI ระดับมืออาชีพ")
     print("="*60)
 
 def print_section(title):
-    """Print a formatted section header."""
+    """พิมพ์หัวข้อส่วนต่างๆ ในรูปแบบที่กำหนด"""
     print(f"\n📋 {title}")
     print("-" * (len(title) + 4))
 
 def check_python_version():
-    """Check if Python version meets requirements."""
+    """ตรวจสอบว่าเวอร์ชันของ Python ตรงตามความต้องการหรือไม่"""
     version = sys.version_info
     if version.major < 3 or (version.major == 3 and version.minor < 8):
-        print("❌ Python 3.8+ is required")
-        print(f"   Current version: {version.major}.{version.minor}.{version.micro}")
-        print("   Please upgrade Python from https://python.org")
+        print("❌ ต้องการ Python 3.8 ขึ้นไป")
+        print(f"   เวอร์ชันปัจจุบัน: {version.major}.{version.minor}.{version.micro}")
+        print("   กรุณาอัปเกรด Python จาก https://python.org")
         return False
     
-    print(f"✅ Python {version.major}.{version.minor}.{version.micro} - OK")
+    print(f"✅ Python {version.major}.{version.minor}.{version.micro} - ปกติ")
     return True
 
 def install_dependencies():
-    """Install required dependencies with progress indication."""
-    print_section("Installing Dependencies")
+    """ติดตั้งไลบรารีที่จำเป็นพร้อมแสดงสถานะการทำงาน"""
+    print_section("กำลังติดตั้งไลบรารีที่จำเป็น (Dependencies)")
     
-    # Check if dependencies are already installed
-    print("🔍 Checking if dependencies are already installed...")
+    # ตรวจสอบว่ามีการติดตั้งไลบรารีไว้แล้วหรือไม่
+    print("🔍 กำลังตรวจสอบการติดตั้งไลบรารีที่มีอยู่...")
     try:
         import torch
         import diffusers
         import flask
         import peft
         import cv2
-        print("✅ All dependencies already installed!")
+        print("✅ ติดตั้งไลบรารีทั้งหมดเรียบร้อยแล้ว!")
         return True
     except ImportError as e:
-        print(f"📦 Some dependencies missing: {e}")
-        print("🔄 Installing required packages...")
+        print(f"📦 พบไลบรารีบางส่วนขาดหายไป: {e}")
+        print("🔄 กำลังติดตั้งแพ็คเกจที่จำเป็น...")
     
-    # Upgrade pip first
-    print("📦 Upgrading pip...")
+    # อัปเกรด pip ก่อนเป็นอันดับแรก
+    print("📦 กำลังอัปเกรด pip...")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-        print("✅ Pip upgraded")
+        print("✅ อัปเกรด pip สำเร็จ")
     except subprocess.CalledProcessError:
-        print("⚠️  Warning: Could not upgrade pip, continuing...")
+        print("⚠️  คำเตือน: ไม่สามารถอัปเกรด pip ได้ กำลังดำเนินการต่อ...")
     
-    # Install PyTorch first (largest package)
-    print("\n🔥 Installing PyTorch (this is the largest download)...")
-    print("📥 This may take 5-10 minutes depending on your internet connection...")
-    print("💡 The process may appear frozen - this is normal, please wait...")
+    # ติดตั้ง PyTorch ก่อน (เนื่องจากเป็นแพ็คเกจที่ใหญ่ที่สุด)
+    print("\n🔥 กำลังติดตั้ง PyTorch (นี่คือไฟล์ดาวน์โหลดที่ใหญ่ที่สุด)...")
+    print("📥 อาจใช้เวลา 5-10 นาที ขึ้นอยู่กับความเร็วอินเทอร์เน็ตของคุณ...")
+    print("💡 กระบวนการอาจดูเหมือนค้าง - นี่เป็นเรื่องปกติ โปรดรอสักครู่...")
     
     torch_installed = False
     
-    # Try CUDA version first if available
+    # พยายามติดตั้งเวอร์ชัน CUDA หากเป็น Windows
     if platform.system() == "Windows":
-        print("🎮 Trying PyTorch with CUDA support...")
+        print("🎮 กำลังพยายามติดตั้ง PyTorch พร้อมรองรับ CUDA...")
         try:
             subprocess.check_call([
                 sys.executable, "-m", "pip", "install", 
                 "torch", "torchvision", "torchaudio",
                 "--index-url", "https://download.pytorch.org/whl/cu130"
             ])
-            print("✅ PyTorch with CUDA installed successfully")
+            print("✅ ติดตั้ง PyTorch แบบ CUDA สำเร็จ")
             torch_installed = True
         except subprocess.CalledProcessError:
-            print("⚠️  CUDA version failed, trying CPU version...")
+            print("⚠️  การติดตั้งเวอร์ชัน CUDA ล้มเหลว กำลังลองติดตั้งเวอร์ชัน CPU...")
     
-    # Fallback to CPU version
+    # ติดตั้งเวอร์ชัน CPU หากแบบ CUDA ล้มเหลวหรือไม่ได้อยู่ใน Windows
     if not torch_installed:
-        print("💻 Installing PyTorch CPU version...")
+        print("💻 กำลังติดตั้ง PyTorch เวอร์ชัน CPU...")
         try:
             subprocess.check_call([
                 sys.executable, "-m", "pip", "install",
                 "torch", "torchvision", "torchaudio",
                 "--index-url", "https://download.pytorch.org/whl/cpu"
             ])
-            print("✅ PyTorch CPU version installed successfully")
+            print("✅ ติดตั้ง PyTorch เวอร์ชัน CPU สำเร็จ")
             torch_installed = True
         except subprocess.CalledProcessError as e:
-            print(f"❌ Failed to install PyTorch: {e}")
+            print(f"❌ ติดตั้ง PyTorch ล้มเหลว: {e}")
             return False
     
-    # Install other packages
-    print("\n📚 Installing AI and web server libraries...")
-    print("📥 This may take another 5-10 minutes...")
+    # ติดตั้งแพ็คเกจอื่นๆ
+    print("\n📚 กำลังติดตั้งไลบรารี AI และเว็บเซิร์ฟเวอร์...")
+    print("📥 อาจใช้เวลาอีกประมาณ 5-10 นาที...")
     
     other_requirements = [
         "diffusers>=0.27.0", "transformers>=4.40.0", "accelerate>=0.29.0",
         "flask>=2.3.0", "flask-cors>=4.0.0", "pillow>=9.5.0",
         "numpy>=1.24.0", "safetensors>=0.4.0", "peft>=0.11.0",
-        "opencv-python", "scipy", "timm", "einops", "kornia"
+        "opencv-python", "scipy", "timm", "einops", "kornia","scikit-learn"
     ]
     
     try:
         subprocess.check_call([
             sys.executable, "-m", "pip", "install"
         ] + other_requirements)
-        print("✅ All other dependencies installed successfully")
+        print("✅ ติดตั้งไลบรารีอื่นๆ ทั้งหมดสำเร็จ")
     except subprocess.CalledProcessError as e:
-        print(f"⚠️  Some packages failed, trying individual installation...")
+        print(f"⚠️  บางแพ็คเกจติดตั้งล้มเหลว กำลังลองติดตั้งทีละตัว...")
         
-        # Try installing packages individually
+        # พยายามติดตั้งแพ็คเกจทีละตัว
         failed_packages = []
         for package in other_requirements:
             try:
-                print(f"📦 Installing {package}...")
+                print(f"📦 กำลังติดตั้ง {package}...")
                 subprocess.check_call([
                     sys.executable, "-m", "pip", "install", package
                 ])
-                print(f"✅ {package} installed")
+                print(f"✅ ติดตั้ง {package} สำเร็จ")
             except subprocess.CalledProcessError:
-                print(f"❌ Failed to install {package}")
+                print(f"❌ ติดตั้ง {package} ล้มเหลว")
                 failed_packages.append(package)
         
         if failed_packages:
-            print(f"⚠️  Some packages failed: {failed_packages}")
-            print("🔄 Trying alternative installation method...")
+            print(f"⚠️  แพ็คเกจที่ล้มเหลว: {failed_packages}")
+            print("🔄 กำลังลองใช้วิธีการติดตั้งทางเลือก...")
             try:
                 subprocess.check_call([
                     sys.executable, "-m", "pip", "install", "--no-cache-dir"
                 ] + failed_packages)
-                print("✅ Alternative installation successful")
+                print("✅ การติดตั้งทางเลือกสำเร็จ")
             except subprocess.CalledProcessError:
-                print("❌ Alternative installation also failed")
-                print("\n🔧 Troubleshooting suggestions:")
-                print("   • Check your internet connection")
-                print("   • Free up disk space (need 5-10GB)")
-                print("   • Try running as Administrator")
-                print("   • Temporarily disable antivirus software")
+                print("❌ การติดตั้งทางเลือกก็ล้มเหลวเช่นกัน")
+                print("\n🔧 ข้อแนะนำในการแก้ไขปัญหา:")
+                print("   • ตรวจสอบการเชื่อมต่ออินเทอร์เน็ตของคุณ")
+                print("   • เคลียร์พื้นที่ในฮาร์ดดิสก์ (ต้องการประมาณ 5-10GB)")
+                print("   • ลองรันด้วยสิทธิ์ Administrator")
+                print("   • ปิดโปรแกรมสแกนไวรัสชั่วคราว")
                 return False
     
-    # Verify installation
-    print("\n🔍 Verifying installation...")
+    # ตรวจสอบความถูกต้องหลังการติดตั้ง
+    print("\n🔍 กำลังตรวจสอบความถูกต้องของการติดตั้ง...")
     try:
         import torch
-        print(f"✅ PyTorch {torch.__version__} - Device: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
+        print(f"✅ PyTorch {torch.__version__} - อุปกรณ์: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
         
         import diffusers
         print(f"✅ Diffusers {diffusers.__version__}")
@@ -159,121 +159,121 @@ def install_dependencies():
         import flask
         print(f"✅ Flask {flask.__version__}")
         
-        print("🎉 All dependencies installed and verified!")
+        print("🎉 ติดตั้งและตรวจสอบไลบรารีทั้งหมดเรียบร้อยแล้ว!")
         return True
         
     except ImportError as e:
-        print(f"❌ Verification failed: {e}")
-        print("Some packages may not have installed correctly.")
+        print(f"❌ การตรวจสอบล้มเหลว: {e}")
+        print("บางแพ็คเกจอาจติดตั้งไม่ถูกต้อง")
         return False
 
 def select_startup_model():
-    """Interactive model selection with improved UI."""
-    print_section("Base Model Selection")
+    """เลือกโมเดลเริ่มต้นผ่านหน้าจอโต้ตอบ"""
+    print_section("การเลือกโมเดลหลัก (Base Model Selection)")
     
     models = [
         {
             "name": "stabilityai/stable-diffusion-xl-base-1.0",
-            "description": "SDXL Base (Recommended) - High quality, ~7GB",
+            "description": "SDXL Base (แนะนำ) - คุณภาพสูง, ขนาดประมาณ 7GB",
             "size": "~7GB"
         },
         {
             "name": "runwayml/stable-diffusion-v1-5",
-            "description": "SD 1.5 - Faster, smaller, ~4GB",
+            "description": "SD 1.5 - เร็วกว่า, ขนาดเล็กกว่า, ขนาดประมาณ 4GB",
             "size": "~4GB"
         }
     ]
     
-    print("Choose a base model to load on startup:")
+    print("เลือกโมเดลหลักที่จะโหลดตอนเริ่มต้น:")
     print()
     
     for i, model in enumerate(models):
-        print(f"  [{i+1}] {model['description']}")
-        print(f"      Size: {model['size']}")
+        print(f"   [{i+1}] {model['description']}")
+        print(f"      ขนาด: {model['size']}")
         print()
     
-    print(f"  [{len(models)+1}] None (load manually later)")
+    print(f"   [{len(models)+1}] ไม่โหลด (โหลดเองภายหลัง)")
     print()
     
     while True:
         try:
-            choice_str = input(f"Enter choice [1-{len(models)+1}] (default: 1): ").strip()
+            choice_str = input(f"ระบุตัวเลือก [1-{len(models)+1}] (ค่าเริ่มต้นคือ 1): ").strip()
             choice = int(choice_str) if choice_str else 1
             
             if 1 <= choice <= len(models):
                 selected = models[choice - 1]
-                print(f"✅ Selected: {selected['name']}")
+                print(f"✅ เลือก: {selected['name']}")
                 return selected["name"]
             elif choice == len(models) + 1:
-                print("✅ No model will be loaded on startup")
+                print("✅ จะไม่มีการโหลดโมเดลตอนเริ่มต้น")
                 return "none"
             else:
-                print(f"❌ Invalid choice. Please enter 1-{len(models)+1}")
+                print(f"❌ ตัวเลือกไม่ถูกต้อง กรุณาระบุ 1-{len(models)+1}")
                 
         except ValueError:
-            print("❌ Please enter a valid number")
+            print("❌ กรุณากรอกเป็นตัวเลขเท่านั้น")
 
 def configure_offline_mode():
-    """Configure offline mode with explanation."""
-    print_section("Network Configuration")
+    """ตั้งค่าโหมดออฟไลน์พร้อมคำอธิบาย"""
+    print_section("การตั้งค่าเครือข่าย")
     
-    print("Offline Mode Options:")
-    print("  • Online:  Download models from internet (recommended for first run)")
-    print("  • Offline: Use only cached models (faster startup, requires previous download)")
+    print("ตัวเลือกโหมดออฟไลน์:")
+    print("  • ออนไลน์: ดาวน์โหลดโมเดลจากอินเทอร์เน็ต (แนะนำสำหรับการรันครั้งแรก)")
+    print("  • ออฟไลน์: ใช้เฉพาะโมเดลที่ดาวน์โหลดไว้แล้ว (เริ่มเครื่องได้เร็วขึ้น แต่ต้องเคยดาวน์โหลดมาก่อน)")
     print()
     
-    response = input("Run in Offline Mode? [y/N]: ").lower().strip()
+    response = input("รันในโหมดออฟไลน์หรือไม่? [y/N]: ").lower().strip()
     
     if response in ['y', 'yes']:
-        print("✅ Offline mode enabled - using cached models only")
+        print("✅ เปิดใช้งานโหมดออฟไลน์ - จะใช้เฉพาะโมเดลใน Cache เท่านั้น")
         return True
     else:
-        print("✅ Online mode enabled - models will download as needed")
+        print("✅ เปิดใช้งานโหมดออนไลน์ - จะดาวน์โหลดโมเดลเพิ่มหากจำเป็น")
         return False
 
 def setup_directories():
-    """Create necessary directories with proper structure."""
-    print_section("Setting Up Directories")
+    """สร้างโครงสร้างโฟลเดอร์ที่จำเป็นสำหรับการทำงาน"""
+    print_section("กำลังตั้งค่าโฟลเดอร์")
     
     directories = ["loras", "models", "cache"]
     
     for directory in directories:
         Path(directory).mkdir(exist_ok=True)
-        print(f"📁 Created/verified: {directory}/")
+        print(f"📁 ตรวจสอบ/สร้าง: {directory}/")
     
-    print("✅ Directory structure ready")
+    print("✅ โครงสร้างโฟลเดอร์พร้อมใช้งาน")
 
 def check_system_requirements():
-    """Check system requirements and provide recommendations."""
-    print_section("System Requirements Check")
+    """ตรวจสอบสเปคเครื่องและให้คำแนะนำ"""
+    print_section("ตรวจสอบความต้องการของระบบ")
     
     try:
         import psutil
         
-        # Memory check
+        # ตรวจสอบ RAM
         memory_gb = psutil.virtual_memory().total / (1024**3)
         print(f"💾 RAM: {memory_gb:.1f}GB")
         
         if memory_gb < 8:
-            print("⚠️  Warning: Less than 8GB RAM detected")
-            print("   Consider closing other applications for better performance")
+            print("⚠️  คำเตือน: ตรวจพบ RAM น้อยกว่า 8GB")
+            print("   แนะนำให้ปิดแอปพลิเคชันอื่นเพื่อให้ทำงานได้ดีขึ้น")
         else:
-            print("✅ RAM: Sufficient")
+            print("✅ RAM: เพียงพอ")
         
-        # Disk space check
+        # ตรวจสอบพื้นที่ว่างในดิสก์
         disk_free = psutil.disk_usage('.').free / (1024**3)
-        print(f"💽 Free disk space: {disk_free:.1f}GB")
+        print(f"💽 พื้นที่ว่างในดิสก์: {disk_free:.1f}GB")
         
         if disk_free < 10:
-            print("⚠️  Warning: Less than 10GB free space")
-            print("   AI models require significant storage space")
+            print("⚠️  คำเตือน: ตรวจพบพื้นที่ว่างน้อยกว่า 10GB")
+            print("   โมเดล AI ต้องใช้พื้นที่จัดเก็บค่อนข้างมาก")
         else:
-            print("✅ Disk space: Sufficient")
+            print("✅ พื้นที่ในดิสก์: เพียงพอ")
             
     except ImportError:
-        print("ℹ️  Install psutil for detailed system info: pip install psutil")
+        print("ℹ️  ติดตั้ง psutil เพื่อดูข้อมูลระบบที่ละเอียดขึ้น: pip install psutil")
     
-    # GPU check
+    # ตรวจสอบ GPU
     try:
         import torch
         if torch.cuda.is_available():
@@ -283,90 +283,90 @@ def check_system_requirements():
             print(f"🔥 VRAM: {vram_gb:.1f}GB")
             
             if vram_gb < 6:
-                print("⚠️  Warning: Less than 6GB VRAM")
-                print("   Consider using smaller models or reducing batch size")
+                print("⚠️  คำเตือน: VRAM น้อยกว่า 6GB")
+                print("   แนะนำให้ใช้โมเดลขนาดเล็กหรือลดขนาด Batch")
             else:
-                print("✅ GPU: Excellent for AI generation")
+                print("✅ GPU: ยอดเยี่ยมสำหรับการสร้างภาพด้วย AI")
         else:
-            print("⚠️  No CUDA GPU detected - using CPU (slower)")
-            print("   Consider using a NVIDIA GPU for better performance")
+            print("⚠️  ไม่พบ NVIDIA GPU (CUDA) - จะใช้ CPU แทน (ทำงานช้ากว่า)")
+            print("   แนะนำให้ใช้ NVIDIA GPU เพื่อประสิทธิภาพที่ดีที่สุด")
     except ImportError:
-        print("📦 PyTorch not yet installed")
+        print("📦 ยังไม่ได้ติดตั้ง PyTorch")
 
 def main():
-    """Main startup function with comprehensive setup."""
+    """ฟังก์ชันหลักสำหรับการเริ่มระบบ"""
     print_banner()
     
-    # Python version check
+    # ตรวจสอบเวอร์ชัน Python
     if not check_python_version():
-        input("\nPress Enter to exit...")
+        input("\nกด Enter เพื่อออก...")
         sys.exit(1)
     
-    # System requirements check
+    # ตรวจสอบสเปคเครื่อง
     check_system_requirements()
     
-    # Check and install dependencies
-    print("\n🔧 Checking Python dependencies...")
+    # ตรวจสอบและติดตั้งไลบรารี
+    print("\n🔧 กำลังตรวจสอบไลบรารี Python...")
     if not install_dependencies():
-        print("\n❌ Dependency installation failed!")
-        print("🔧 You can try manual installation:")
+        print("\n❌ การติดตั้งไลบรารีล้มเหลว!")
+        print("🔧 คุณสามารถลองติดตั้งด้วยตัวเองได้โดยใช้คำสั่ง:")
         print("   pip install torch torchvision torchaudio diffusers transformers flask")
-        input("\nPress Enter to exit...")
+        input("\nกด Enter เพื่อออก...")
         sys.exit(1)
     
-    # Setup directories
+    # ตั้งค่าโฟลเดอร์
     setup_directories()
     
-    # Model selection
+    # เลือกโมเดล
     chosen_model = select_startup_model()
     
-    # Offline mode configuration
+    # ตั้งค่าโหมดออฟไลน์
     offline_mode = configure_offline_mode()
     
-    # Final preparation
-    print_section("Starting Server")
+    # เตรียมการขั้นตอนสุดท้าย
+    print_section("กำลังเริ่มเซิร์ฟเวอร์")
     
-    # Clean up any Python cache
+    # ล้าง Python cache เก่า
     try:
         if os.path.exists("__pycache__"):
             shutil.rmtree("__pycache__")
-        print("🧹 Cleaned Python cache")
+        print("🧹 ล้าง Python cache เรียบร้อย")
     except:
         pass
     
-    # Start the server
+    # เริ่มต้นเซิร์ฟเวอร์
     try:
-        print("🚀 Importing server modules...")
+        print("🚀 กำลังนำเข้าโมดูลเซิร์ฟเวอร์...")
         from sd_server import main as run_server
         
-        print("🌟 Server starting with configuration:")
-        print(f"   • Model: {chosen_model}")
-        print(f"   • Offline: {offline_mode}")
+        print("🌟 กำลังเริ่มเซิร์ฟเวอร์ด้วยการตั้งค่าดังนี้:")
+        print(f"   • โมเดล: {chosen_model}")
+        print(f"   • ออฟไลน์: {offline_mode}")
         print(f"   • URL: http://127.0.0.1:5000")
         
         print("\n" + "="*60)
-        print("🎉 LOCAL AI GENERATOR SERVER STARTING...")
-        print("🎨 Ready for Aseprite plugin connection!")
+        print("🎉 กำลังเริ่ม LOCAL AI GENERATOR SERVER...")
+        print("🎨 พร้อมสำหรับการเชื่อมต่อจากปลั๊กอิน Aseprite แล้ว!")
         print("="*60)
         
-        # Start the server
+        # รันเซิร์ฟเวอร์
         run_server(default_model_to_load=chosen_model, offline=offline_mode)
         
     except KeyboardInterrupt:
-        print("\n\n👋 Server stopped by user")
-        print("Thank you for using Local AI Generator!")
+        print("\n\n👋 เซิร์ฟเวอร์ถูกหยุดโดยผู้ใช้")
+        print("ขอบคุณที่ใช้ Local AI Generator!")
         
     except Exception as e:
         import traceback
-        print(f"\n❌ Server error occurred:")
+        print(f"\n❌ เกิดข้อผิดพลาดที่เซิร์ฟเวอร์:")
         print(f"   {str(e)}")
-        print("\n🐛 Full error details:")
+        print("\n🐛 รายละเอียดข้อผิดพลาดทั้งหมด:")
         traceback.print_exc()
-        print("\n🔧 Troubleshooting:")
-        print("   • Check if port 5000 is available")
-        print("   • Verify all dependencies are installed")
-        print("   • Try running as administrator")
-        input("\nPress Enter to exit...")
+        print("\n🔧 แนวทางการแก้ไข:")
+        print("   • ตรวจสอบว่าพอร์ต 5000 ถูกใช้งานอยู่หรือไม่")
+        print("   • ตรวจสอบการติดตั้งไลบรารีทั้งหมด")
+        print("   • ลองรันด้วยสิทธิ์ Administrator")
+        input("\nกด Enter เพื่อออก...")
         sys.exit(1)
 
 if __name__ == "__main__":
