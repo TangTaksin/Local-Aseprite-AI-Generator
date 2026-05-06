@@ -29,6 +29,8 @@ warnings.filterwarnings("ignore", message=".*CLIPTextModelWithProjection.*")
 
 # ปิดคำเตือนของ Flask development server
 import logging
+from diffusers.utils import logging as diffusers_logging
+diffusers_logging.set_verbosity_error()
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
