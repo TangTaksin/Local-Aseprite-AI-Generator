@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Local AI Generator สำหรับ Aseprite - สคริปต์เริ่มต้นที่ปรับปรุงใหม่
-สคริปต์เริ่มต้นระดับมืออาชีพพร้อมระบบจัดการข้อผิดพลาดและประสบการณ์ผู้ใช้ที่ดียิ่งขึ้น
-เวอร์ชัน 2.1 - รองรับ RTX 5070 Ti และโครงสร้างโฟลเดอร์ใหม่สำหรับโมเดล Local
+Local AI Generator สำหรับ Aseprite
+เวอร์ชัน 2.2
 """
 
 import sys
@@ -14,8 +13,7 @@ from pathlib import Path
 
 def print_banner():
     print("\n" + "=" * 60)
-    print("🎮 LOCAL AI GENERATOR FOR ASEPRITE v2.1")
-    print("🎨 Optimized for RTX 50 Series")
+    print("🎮 LOCAL AI GENERATOR FOR ASEPRITE v2.2")
     print("=" * 60)
 
 
@@ -26,34 +24,41 @@ def print_section(title):
 
 
 def check_python_version():
-    """ตรวจสอบว่าเวอร์ชันของ Python ตรงตามความต้องการหรือไม่"""
+    """ตรวจสอบว่าเวอร์ชันของ Python ตรงตามความต้องการหรือไม่ (เป้าหมายคือ 3.11.x)"""
     version = sys.version_info
+
     if version.major < 3 or (version.major == 3 and version.minor < 8):
-        print("❌ ต้องการ Python 3.8 ขึ้นไป")
+        print("❌ เวอร์ชัน Python เก่าเกินไปสำหรับระบบนี้")
         print(f"   เวอร์ชันปัจจุบัน: {version.major}.{version.minor}.{version.micro}")
-        print("   กรุณาอัปเกรด Python จาก https://python.org")
+        print("   กรุณาใช้ Python 3.10.x (แนะนำ 3.10 ขึ้นไป)")
         return False
 
-    print(f"✅ Python {version.major}.{version.minor}.{version.micro} - ปกติ")
+    if version.major == 3 and version.minor > 14:
+        print(
+            f"⚠️ คำเตือน: คุณกำลังใช้ Python {version.major}.{version.minor}.{version.micro}"
+        )
+        print("   หากรันแล้วพบข้อผิดพลาด แนะนำให้ดาวน์เกรดกลับมาที่ 3.14")
+    else:
+        print(f"✅ Python {version.major}.{version.minor}.{version.micro} - ใช้งานได้")
+
     return True
 
 
 def install_dependencies():
-    """ติดตั้งไลบรารีทั้งหมดโดยตรงจากโค้ด"""
+    """ติดตั้งไลบรารีตามเวอร์ชันที่ทดสอบแล้วว่าใช้งานกับ Pony XL ได้ชัวร์"""
     print("\n📋 กำลังจัดการไลบรารี (Internal Dependency Management)")
     print("-" * 30)
 
-    # # 1. อัปเกรด pip
-    # print("📦 กำลังอัปเกรด pip...")
-    # subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+    # อัปเกรด pip
+    print("📦 กำลังอัปเกรด pip...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
 
-    # 2. ติดตั้ง PyTorch Suite (ระบุ Index สำหรับ CUDA 13.0)
-    print("\n🔥 กำลังติดตั้ง PyTorch สำหรับ RTX 50 Series (CUDA 13.0)...")
+    # ติดตั้ง PyTorch
+    print("\n🔥 กำลังติดตั้ง PyTorch (CUDA 13.0)")
     torch_packages = [
-        "torch==2.11.0",
-        "torchvision==0.26.0",
-        "torchaudio==2.11.0",
-        "xformers==0.0.35",
+        "torch",
+        "torchvision",
+        "torchaudio",
     ]
     subprocess.check_call(
         [
@@ -67,26 +72,27 @@ def install_dependencies():
         ]
     )
 
-    # 3. ติดตั้ง AI & Web Libraries (ใช้ Index มาตรฐาน เพื่อไม่ให้หา sentencepiece ไม่เจอ)
+    # ติดตั้งไลบรารี AI และระบบเสริม (ระบุเวอร์ชันเพื่อป้องกัน Conflict)
     print("\n📚 กำลังติดตั้งไลบรารี AI และระบบเสริม...")
     other_requirements = [
-        "diffusers==0.35.0",
-        "transformers==4.48.0",
-        "accelerate==1.2.0",
+        "diffusers==0.38.0",
+        "transformers==4.57.6",
+        "safetensors==0.8.0rc0",
+        "accelerate==1.13.0",
+        "huggingface-hub==0.36.2",
+        "flask",
+        "flask-cors",
         "sentencepiece",
         "kornia",
         "einops",
-        "flask>=3.0.0",
-        "flask-cors>=4.0.0",
-        "pillow>=10.0.0",
-        "safetensors>=0.4.0",
-        "peft>=0.14.0",
+        "pillow",
+        "peft",
         "opencv-python",
         "timm",
-        "scipy",
-        "numpy>=2.0.0",
+        "numpy",
     ]
-    # ใช้การติดตั้งแบบปกติ (จะวิ่งไปที่ PyPI โดยอัตโนมัติ)
+
+    # ใช้การติดตั้งแบบปกติ
     subprocess.check_call([sys.executable, "-m", "pip", "install"] + other_requirements)
 
     print("\n✅ ติดตั้งไลบรารีทั้งหมดเรียบร้อยแล้ว!")
@@ -173,7 +179,7 @@ def setup_directories():
     print_section("กำลังตั้งค่าโฟลเดอร์")
 
     # เพิ่มโฟลเดอร์ outputs เพื่อเก็บประวัติการเจน
-    directories = ["loras", "models", "cache", "outputs"]
+    directories = ["loras", "models", "cache"]
 
     for directory in directories:
         Path(directory).mkdir(exist_ok=True)
@@ -208,8 +214,10 @@ def check_system_requirements():
                 print("🚀 GPU ของคุณยอดเยี่ยมมาก")
         else:
             print("⚠️ ไม่พบ NVIDIA GPU (CUDA) - จะใช้ CPU แทน")
-    except:
+    except ImportError:
         print("📦 ยังไม่ได้ติดตั้ง PyTorch")
+    except Exception as e:
+        print(f"⚠️ GPU check failed: {e}")
 
 
 def main():
@@ -217,6 +225,7 @@ def main():
     print_banner()
 
     if not check_python_version():
+        print("   หากรันแล้วพบข้อผิดพลาด แนะนำให้ดาวน์เกรดกลับมาที่ 3.14")
         input("\nกด Enter เพื่อออก...")
         sys.exit(1)
 
