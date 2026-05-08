@@ -8,6 +8,7 @@ import sys
 import os
 import subprocess
 import shutil
+import glob
 from pathlib import Path
 
 
@@ -162,30 +163,68 @@ def select_startup_model():
 
 
 def configure_offline_mode():
-    """ตั้งค่าโหมดออฟไลน์พร้อมคำอธิบาย"""
     print_section("การตั้งค่าเครือข่าย")
 
-    print("ตัวเลือกโหมดออฟไลน์:")
-    print("  • ออนไลน์: ดาวน์โหลดโมเดลจากอินเทอร์เน็ต (แนะนำสำหรับการรันครั้งแรก)")
-    print("  • ออฟไลน์: ใช้เฉพาะโมเดลที่ดาวน์โหลดไว้แล้ว (เริ่มเครื่องได้เร็วขึ้น)")
+    os.makedirs("models", exist_ok=True)
+    local_files = glob.glob("models/*.safetensors") + glob.glob("models/*.ckpt")
+
+    standard_models = [
+        "stabilityai/stable-diffusion-xl-base-1.0",
+        "runwayml/stable-diffusion-v1-5",
+    ]
+
+    hf_cache_path = os.path.join(
+        os.path.expanduser("~"), ".cache", "huggingface", "hub"
+    )
+    cached_standard_models = []
+
+    if os.path.exists(hf_cache_path):
+        for m_id in standard_models:
+            folder_name = "models--" + m_id.replace("/", "--")
+            full_path = os.path.join(hf_cache_path, folder_name)
+
+            if os.path.exists(full_path) and os.path.exists(
+                os.path.join(full_path, "snapshots")
+            ):
+                cached_standard_models.append(m_id)
+
+    print(f"📦 สถานะทรัพยากรในเครื่อง:")
+    print(f"   • ไฟล์ Local (.safetensors): {len(local_files)} ไฟล์")
+
+    if cached_standard_models:
+        print(f"   • โมเดลมาตรฐานพร้อมรันออฟไลน์:")
+        for m in cached_standard_models:
+            print(f"      ✅ {m.split('/')[-1]}")
+    else:
+        print(f"   • โมเดลมาตรฐาน: ❌ ไม่พบใน Cache (ต้องออนไลน์เพื่อโหลด)")
+
+    print("-" * 45)
+
+    if not local_files and not cached_standard_models:
+        print("⚠️ ไม่พบข้อมูลโมเดลใดๆ ในเครื่องเลย")
+        print("🌐 บังคับใช้ 'โหมดออนไลน์' เพื่อเตรียมดาวน์โหลด")
+        return False
+
+    print("เลือกโหมดการรัน:")
+    print("  [ 1 ] ออนไลน์  : ดาวน์โหลดโมเดลจากอินเทอร์เน็ต")
+    print("  [ 2 ] ออฟไลน์  : ใช้เฉพาะโมเดลที่มีอยู่แล้ว ไม่ใช้เน็ต")
     print()
 
-    response = input("รันในโหมดออฟไลน์หรือไม่? [y/N]: ").lower().strip()
-    return response in ["y", "yes"]
+    res = input("เลือก [1 หรือ 2] (Default 2): ").strip()
+    return res != "1"
 
 
 def setup_directories():
-    """สร้างโครงสร้างโฟลเดอร์ที่จำเป็นสำหรับการทำงาน"""
+    """สร้างโครงสร้างโฟลเดอร์ที่จำเป็น"""
     print_section("กำลังตั้งค่าโฟลเดอร์")
 
-    # เพิ่มโฟลเดอร์ outputs เพื่อเก็บประวัติการเจน
     directories = ["loras", "models", "cache"]
 
     for directory in directories:
-        Path(directory).mkdir(exist_ok=True)
-        print(f"📁 ตรวจสอบ/สร้าง: {directory}/")
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        print(f"📁  ตรวจสอบ/สร้าง: {directory}/")
 
-    print("✅ โครงสร้างโฟลเดอร์พร้อมใช้งาน")
+    print("✅  โครงสร้างโฟลเดอร์พร้อมใช้งาน")
 
 
 def check_system_requirements():
@@ -229,41 +268,31 @@ def main():
         input("\nกด Enter เพื่อออก...")
         sys.exit(1)
 
-    # 1. ตั้งค่าโฟลเดอร์ก่อนเพื่อให้โมเดลสแกนเจอ
     setup_directories()
 
-    # 2. ตรวจสอบและติดตั้งไลบรารี
-    if not install_dependencies():
-        print("\n❌ การติดตั้งไลบรารีล้มเหลว!")
-        input("\nกด Enter เพื่อออก...")
-        sys.exit(1)
-
-    # 3. ตรวจสอบสเปคเครื่อง
-    check_system_requirements()
-
-    # 4. เลือกโมเดลและตั้งค่าโหมด
     chosen_model = select_startup_model()
     offline_mode = configure_offline_mode()
+
+    if not offline_mode:
+        print("\n🌐 กำลังตรวจสอบการอัปเดตไลบรารี (Online Mode)...")
+        if not install_dependencies():
+            print("\n❌ การติดตั้งไลบรารีล้มเหลว! (ตรวจสอบการเชื่อมต่อเน็ต)")
+            cont = input("ต้องการพยายามรันต่อแบบ Offline หรือไม่? [y/N]: ").lower()
+            if cont not in ["y", "yes"]:
+                sys.exit(1)
+    else:
+        print("\n🔌 โหมดออฟไลน์: ข้ามการตรวจสอบไลบรารีเพื่อความรวดเร็ว")
+
+    check_system_requirements()
 
     print_section("กำลังเริ่มเซิร์ฟเวอร์")
 
     try:
-        if os.path.exists("__pycache__"):
-            shutil.rmtree("__pycache__")
-    except:
-        pass
-
-    try:
-        print("🚀 กำลังนำเข้าโมดูลเซิร์ฟเวอร์...")
         from sd_server import main as run_server
 
         print("\n" + "=" * 60)
         print("🎉 เซิร์ฟเวอร์พร้อมทำงาน!")
-        print(f"   • โมเดลเริ่มต้น: {chosen_model}")
-        print(f"   • โหมดออฟไลน์: {offline_mode}")
         print("=" * 60)
-
-        # รันเซิร์ฟเวอร์ด้วยการตั้งค่าที่เลือก
         run_server(default_model_to_load=chosen_model, offline=offline_mode)
 
     except Exception as e:
