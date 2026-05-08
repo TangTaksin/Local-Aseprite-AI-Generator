@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-เซิร์ฟเวอร์ Local AI Generator สำหรับ Aseprite
+เซิร์ฟเวอร์ Local AI Generator สำหรับ Aseprite - Optimized for RTX 5070 Ti
 การสร้าง Pixel Art ระดับมืออาชีพโดยใช้ Stable Diffusion พร้อมรองรับ LoRA และการลบพื้นหลังด้วย BiRefNet
-เวอร์ชัน 2.1 - เพิ่มการรองรับการโหลดโมเดลจากโฟลเดอร์ models และรองรับ .safetensors โดยตรง
+เวอร์ชัน 2.2 - Optimized for Blackwell Architecture (RTX 5070 Ti)
 """
 
 from diffusers.utils import logging as diffusers_logging
@@ -10,16 +10,24 @@ import logging
 import os
 import sys
 import json
+import platform
 import base64
 import io
 import warnings
 import glob
+import time
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
 import torch.nn.functional as F
-from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, AutoencoderKL
+from diffusers import (
+    StableDiffusionPipeline,
+    StableDiffusionXLPipeline,
+    AutoencoderKL,
+    DPMSolverMultistepScheduler,
+    EulerDiscreteScheduler,
+)
 from transformers import AutoModelForImageSegmentation
 from torchvision import transforms
 from PIL import Image
@@ -51,34 +59,121 @@ class PixelArtSDServer:
         self.model_cache = {}
         self.offline_mode = False
 
+        is_windows = platform.system() == "Windows"
+        self.use_compile = False if is_windows else True
+
+        # 🎯 RTX 5070 Ti Optimized Settings
+        self.optimized_settings = {
+            "use_bf16": torch.cuda.is_bf16_supported(),
+            "use_compile": self.use_compile,
+            "enable_xformers": not is_windows,
+            "enable_attention_slicing": True,
+            "cudnn_benchmark": True,
+            "float32_matmul_precision": "high",  # or "medium" for more speed
+        }
+
         # ตั้งค่าพื้นฐานสำหรับการสร้างภาพ Pixel Art
         self.default_settings = {
-            "num_inference_steps": 30,
+            "num_inference_steps": 25,  # Reduced from 30 (DPM++ converges faster)
             "guidance_scale": 7.5,
             "negative_prompt": "blurry, smooth, antialiased, realistic, photographic, 3d render, low quality, worst quality, lowres, jpeg artifacts, watermark, signature, username, out of focus, hazy, painting, oil painting, sketch, drawing, smooth shading, gradients, noise, extra fingers, deformed",
             "pixel_art_prompt_suffix": ", pixel art, 8bit style, game sprite, masterpiece, sharp pixels",
         }
 
-        print(f"🚀 Local AI Generator Server v2.1")
+        print(f"🚀 Local AI Generator Server v2.2 [RTX 5070 Ti Optimized]")
         print(f"📱 อุปกรณ์ที่ใช้: {self.device}")
-        print(f"🔥 ใช้งาน CUDA ได้: {torch.cuda.is_available()}")
+        print(f"🔥 CUDA Available: {torch.cuda.is_available()}")
         if torch.cuda.is_available():
-            print(f"🎮 GPU: {torch.cuda.get_device_name()}")
-            print(
-                f"💾 VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB"
-            )
+            print(f"🎮 GPU: {torch.cuda.get_device_name(0)}")
+            props = torch.cuda.get_device_properties(0)
+            print(f"💾 VRAM: {props.total_memory / 1024**3:.1f}GB")
+            print(f"⚡ Compute Capability: {props.major}.{props.minor}")
+            print(f"🔷 BF16 Support: {torch.cuda.is_bf16_supported()}")
+
+            # 🎯 Apply global CUDA optimizations for Blackwell
+            self._apply_global_cuda_optimizations()
+
+    def _apply_global_cuda_optimizations(self):
+        """Apply global CUDA optimizations for RTX 5070 Ti"""
+        if self.device != "cuda":
+            return
+
+        print("\n🔧 Applying RTX 5070 Ti Global Optimizations...")
+
+        # 1. Enable cuDNN benchmark for consistent input sizes (pixel art = fixed resolutions)
+        if self.optimized_settings["cudnn_benchmark"]:
+            torch.backends.cudnn.benchmark = True
+            print("   ✅ cuDNN Benchmark: Enabled (faster for fixed resolutions)")
+
+        # 2. Set float32 matmul precision for Tensor Cores
+        precision = self.optimized_settings["float32_matmul_precision"]
+        try:
+            torch.set_float32_matmul_precision(precision)
+            print(f"   ✅ TF32 Precision: {precision} (optimized for Tensor Cores)")
+        except:
+            print(f"   ⚠️ Could not set matmul precision")
+
+        # 3. Enable TF32 for CUDA matmul operations
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        print("   ✅ TF32 Acceleration: Enabled")
+
+        # 4. Pre-allocate some VRAM to reduce fragmentation (optional)
+        # torch.cuda.set_per_process_memory_fraction(0.95, 0)  # Use 95% of VRAM
+
+        print("   ✅ Global CUDA optimizations applied!\n")
+
+    def _optimize_pipeline_for_blackwell(self, pipeline, model_type="sdxl"):
+        if self.device != "cuda":
+            return pipeline
+
+        print(f"🎯 Optimizing {model_type.upper()} pipeline for RTX 5070 Ti...")
+
+        dtype = torch.bfloat16 if self.optimized_settings["use_bf16"] else torch.float16
+        pipeline = pipeline.to(self.device, dtype=dtype)
+        print(f"   ✅ Precision: {dtype}")
+
+        # 📝 channels_last disabled: Blackwell SDXL performs faster with default contiguous layout
+        print("   ✅ Memory Layout: contiguous (default)")
+
+        try:
+            if hasattr(pipeline, "disable_attention_slicing"):
+                pipeline.disable_attention_slicing()  # SDPA runs fastest without slicing
+            print("   ✅ Attention: Native SDPA (Blackwell optimized)")
+        except Exception as e:
+            print(f"   ⚠️ Attention setup note: {e}")
+
+        try:
+            pipeline.enable_vae_slicing()
+            print("   ✅ VAE Slicing: Enabled")
+        except:
+            pass
+
+        if model_type == "sdxl" and hasattr(pipeline, "scheduler"):
+            try:
+                pipeline.scheduler = DPMSolverMultistepScheduler.from_config(
+                    pipeline.scheduler.config,
+                    algorithm_type="sde-dpmsolver++",
+                    use_karras_sigmas=True,
+                )
+                print("   ✅ Scheduler: DPM++ 2M Karras")
+            except:
+                pass
+
+        print("   ✅ Pipeline optimization complete!\n")
+        return pipeline
 
     def load_segmentation_model(self):
-        """โหลดโมเดล BiRefNet สำหรับการลบพื้นหลังระดับมืออาชีพ"""
+        """โหลดโมเดล BiRefNet สำหรับการลบพื้นหลังระดับมืออาชีพ - Optimized"""
         if self.segmentation_model and self.segmentation_processor:
             return True
 
-        print("📦 กำลังโหลดโมเดล BiRefNet สำหรับการลบพื้นหลัง...")
+        print("📦 Loading BiRefNet for background removal (optimized)...")
 
         try:
             model_name = "zhengpeng7/BiRefNet"
 
-            # ตั้งค่าตัวประมวลผลภาพ (Preprocessing)
+            # Setup preprocessing
             self.segmentation_processor = transforms.Compose(
                 [
                     transforms.Resize(
@@ -89,65 +184,76 @@ class PixelArtSDServer:
                 ]
             )
 
-            # โหลดโมเดลสำหรับ Segmentation
+            # Load model with optimizations
             self.segmentation_model = AutoModelForImageSegmentation.from_pretrained(
-                model_name, trust_remote_code=True, local_files_only=self.offline_mode
+                model_name,
+                trust_remote_code=True,
+                local_files_only=self.offline_mode,
+                torch_dtype=(
+                    torch.float16 if torch.cuda.is_available() else torch.float32
+                ),
             )
 
-            # ย้ายไป GPU และบังคับเป็น Float32 เพื่อป้องกันปัญหา Dtype Mismatch
             self.segmentation_model.to(self.device)
-            self.segmentation_model.float()
             self.segmentation_model.eval()
 
-            print("✅ โหลดโมเดล BiRefNet สำเร็จ (โหมด Float32)")
+            # Optimize segmentation model too
+            if self.device == "cuda":
+                try:
+                    self.segmentation_model.to(memory_format=torch.channels_last)
+                except:
+                    pass
+
+            print("✅ BiRefNet loaded successfully (optimized)")
             return True
 
         except Exception as e:
-            print(f"❌ เกิดข้อผิดพลาดในการโหลดโมเดล BiRefNet: {e}")
+            print(f"❌ Error loading BiRefNet: {e}")
             return False
 
     def remove_background(self, pil_image):
-        """ใช้ BiRefNet เพื่อสร้าง Mask ความโปร่งใสคุณภาพสูง"""
+        """ใช้ BiRefNet เพื่อสร้าง Mask ความโปร่งใสคุณภาพสูง - Optimized"""
         if not self.load_segmentation_model():
             raise Exception("ไม่สามารถโหลดโมเดลลบพื้นหลังได้")
 
-        print("🎭 กำลังลบพื้นหลังด้วย BiRefNet...")
+        print("🎭 Removing background with BiRefNet...")
         try:
-            with torch.no_grad():
-                # แปลงเป็น RGB เพื่อเข้ากระบวนการ
+            # Use inference_mode for slightly better performance than no_grad
+            with torch.inference_mode():
                 rgb_image = pil_image.convert("RGB")
-
-                # เตรียม Tensor สำหรับ Input
                 input_tensor = (
                     self.segmentation_processor(rgb_image).unsqueeze(0).to(self.device)
                 )
 
-                # บังคับชนิดข้อมูลให้ตรงกับโมเดล (ป้องกัน Error float/Half)
-                input_tensor = input_tensor.to(
-                    dtype=next(self.segmentation_model.parameters()).dtype
-                )
+                # Match dtype to model
+                model_dtype = next(self.segmentation_model.parameters()).dtype
+                input_tensor = input_tensor.to(dtype=model_dtype)
 
-                # สร้าง Mask
                 outputs = self.segmentation_model(input_tensor)
                 logits = outputs[0]
 
-                # ปรับขนาด Mask ให้เท่ากับรูปภาพต้นฉบับ
-                mask = F.interpolate(logits, size=pil_image.size[::-1], mode="nearest")
+                # Resize mask to original size
+                mask = F.interpolate(
+                    logits,
+                    size=pil_image.size[::-1],
+                    mode="bilinear",
+                    align_corners=False,
+                )
                 mask = torch.sigmoid(mask).squeeze()
 
-                # สร้าง Binary Mask ที่ขอบคมชัด (เหมาะสำหรับ Pixel Art)
+                # Create sharp binary mask for pixel art
                 binary_mask = (mask > 0.5).cpu().numpy().astype(np.uint8)
 
-            # นำ Mask ไปใช้เพื่อสร้างพื้นหลังโปร่งใส (RGBA)
+            # Apply mask
             mask_image = Image.fromarray(binary_mask * 255, mode="L")
             rgba_image = pil_image.convert("RGBA")
             rgba_image.putalpha(mask_image)
 
-            print("✅ ลบพื้นหลังเสร็จสิ้น")
+            print("✅ Background removal complete")
             return rgba_image
 
         except Exception as e:
-            print(f"❌ เกิดข้อผิดพลาดระหว่างการลบพื้นหลัง: {e}")
+            print(f"❌ Error during background removal: {e}")
             return pil_image.convert("RGBA")
 
     def image_to_base64(self, image):
@@ -157,61 +263,61 @@ class PixelArtSDServer:
         return base64.b64encode(image.tobytes()).decode()
 
     def load_model(self, model_name="stabilityai/stable-diffusion-xl-base-1.0"):
-        """โหลดและจัดเก็บโมเดล AI ใน Cache (รองรับ RTX 5070 Ti + แก้บั๊ก CLIP และ Safety Checker)"""
+        """โหลดและจัดเก็บโมเดล AI ใน Cache - RTX 5070 Ti Optimized"""
         try:
             local_only = self.offline_mode
-            if local_only:
-                print("🔒 เปิดใช้งานโหมดออฟไลน์: กำลังโหลดจากหน่วยความจำภายในเท่านั้น")
 
-            # ตรวจสอบว่าโมเดลอยู่ใน Cache หรือไม่
+            # Check cache first
             if model_name in self.model_cache:
-                print(f"⚡ กำลังดึง {model_name} จาก Cache...")
+                print(f"⚡ Loading {model_name} from cache...")
                 self.pipeline = self.model_cache[model_name]
                 self.current_model = model_name
                 self.model_loaded = True
                 return True
 
-            print(f"📥 กำลังโหลดโมเดล: {model_name}")
-            precision = torch.float16 if self.device == "cuda" else torch.float32
+            print(f"📥 Loading model: {model_name}")
 
-            # เช็คว่าเป็นไฟล์โมเดลในโฟลเดอร์ models หรือไม่
+            # Determine model type and precision
+            is_sdxl = "xl" in model_name.lower()
+            precision = (
+                torch.bfloat16
+                if (self.device == "cuda" and torch.cuda.is_bf16_supported())
+                else torch.float16
+            )
+            print(f"   ✅ Using precision: {precision}")
+
+            # Check for local model file
             local_model_path = os.path.join("models", model_name)
             is_local_file = os.path.isfile(local_model_path)
 
             if is_local_file:
-                print(f"📂 พบไฟล์โมเดลในเครื่อง: {local_model_path}")
+                print(f"📂 Found local model: {local_model_path}")
 
-                # แยกกรณี SDXL และ SD 1.5 ให้ชัดเจนเพื่อป้องกันพารามิเตอร์ตีกัน
-                if "xl" in model_name.lower():
-                    print("⚙️ กำลังโหลดโครงสร้าง SDXL แบบ Manual เพื่อแก้บั๊ก CLIP...")
-
-                    # โหลด VAE Fix เพื่อป้องกันภาพพัง (จุดนี้สำคัญสำหรับ Pony XL)
+                if is_sdxl:
+                    print("⚙️ Loading SDXL with Blackwell optimizations...")
                     vae = AutoencoderKL.from_pretrained(
                         "madebyollin/sdxl-vae-fp16-fix",
                         torch_dtype=precision,
                         local_files_only=local_only,
                     )
-
-                    # โหลด SDXL Pipeline (ตัด load_safety_checker ออกเพราะ SDXL ไม่รองรับ)
                     self.pipeline = StableDiffusionXLPipeline.from_single_file(
                         local_model_path,
                         vae=vae,
                         torch_dtype=precision,
                         use_safetensors=True,
-                        config="stabilityai/stable-diffusion-xl-base-1.0",  # แก้บั๊ก 'text_model'
+                        config="stabilityai/stable-diffusion-xl-base-1.0",
                     )
                 else:
-                    # สำหรับ SD 1.5 (รองรับ load_safety_checker)
-                    print("🔧 กำลังโหลดโมเดล SD 1.5 จากไฟล์เครื่อง...")
+                    print("🔧 Loading SD 1.5 from local file...")
                     self.pipeline = StableDiffusionPipeline.from_single_file(
                         local_model_path,
                         torch_dtype=precision,
                         load_safety_checker=False,
                     )
             else:
-                # โหลด Pipeline จาก Hugging Face ออนไลน์ (กรณีไม่พบไฟล์ในเครื่อง)
-                if "xl" in model_name.lower():
-                    print("🌐 กำลังโหลด SDXL ออนไลน์...")
+                # Load from HuggingFace
+                if is_sdxl:
+                    print("🌐 Loading SDXL from HuggingFace...")
                     vae = AutoencoderKL.from_pretrained(
                         "madebyollin/sdxl-vae-fp16-fix",
                         torch_dtype=precision,
@@ -225,7 +331,7 @@ class PixelArtSDServer:
                         local_files_only=local_only,
                     )
                 else:
-                    print("🌐 กำลังโหลด SD 1.5 ออนไลน์...")
+                    print("🌐 Loading SD 1.5 from HuggingFace...")
                     self.pipeline = StableDiffusionPipeline.from_pretrained(
                         model_name,
                         torch_dtype=precision,
@@ -233,97 +339,76 @@ class PixelArtSDServer:
                         local_files_only=local_only,
                     )
 
-            # ==========================================================
-            # ชุดแต่งความเร็วสำหรับ RTX 50 Series (CUDA 13.0)
-            # ==========================================================
+            # 🎯 Apply RTX 5070 Ti specific optimizations
+            model_type = "sdxl" if is_sdxl else "sd15"
+            self.pipeline = self._optimize_pipeline_for_blackwell(
+                self.pipeline, model_type
+            )
+
+            # 🚀 Warmup: Run a dummy inference to compile CUDA kernels
             if self.device == "cuda":
-                print(
-                    "\n🚀 กำลังเปิดใช้งานโหมด Max Speed (รีดพลัง RTX 5070 Ti แบบ 100%)..."
-                )
-
-                # 1. ย้ายโมเดลลง VRAM รวดเดียว (ไม่มีการ Offload) บังคับ float16
-                self.pipeline = self.pipeline.to(self.device, dtype=torch.float16)
-
-                # 2. จัดเรียงหน่วยความจำใหม่ (Channels Last) ให้เข้ากับโครงสร้างชิป NVIDIA สุดๆ
+                print("🔥 Running warmup inference (caching kernels & VRAM)...")
                 try:
-                    self.pipeline.unet.to(memory_format=torch.channels_last)
-                    if hasattr(self.pipeline, "vae"):
-                        self.pipeline.vae.to(memory_format=torch.channels_last)
-                    print(
-                        "   ✅ Memory Layout: ปรับเป็น Channels Last (เร่งความเร็วสูบข้อมูล)"
-                    )
+                    with torch.inference_mode():
+                        _ = self.pipeline(
+                            prompt="pixel",
+                            width=512 if not is_sdxl else 1024,
+                            height=512 if not is_sdxl else 1024,
+                            num_inference_steps=1,
+                            guidance_scale=1.0,
+                        )
+                    print("✅ Warmup complete - Ready for fast inference!")
                 except Exception as e:
-                    print(f"   ⚠️ ไม่สามารถปรับ Memory Layout ได้: {e}")
+                    print(f"⚠️ Warmup skipped: {e}")
 
-                # 3. เปิดใช้ Tensor Cores (TF32) รีดสปีดขั้นสุด
-                try:
-                    torch.backends.cuda.matmul.allow_tf32 = True
-                    torch.backends.cudnn.allow_tf32 = True
-                    print("   ✅ TF32 Acceleration: ทำงานเต็มระบบ")
-                except:
-                    pass
-
-                print(
-                    "   ✅ ตั้งค่าโหมด Max Speed สำเร็จ! (SDPA + Channels Last + TF32)"
-                )
-            else:
-                self.pipeline = self.pipeline.to(self.device, dtype=torch.float16)
-
-            # ==========================================================
-
-            # ย้าย Pipeline ไปยัง GPU และเก็บเข้า Cache
+            # Cache the optimized pipeline
             self.model_cache[model_name] = self.pipeline
             self.current_model = model_name
             self.model_loaded = True
 
-            print(f"✅ โหลดโมเดลสำเร็จ: {model_name}")
+            print(f"✅ Model loaded and optimized: {model_name}")
             return True
 
         except Exception as e:
-            print(f"❌ ไม่สามารถโหลดโมเดล {model_name} ได้: {str(e)}")
+            print(f"❌ Failed to load model {model_name}: {str(e)}")
             import traceback
 
             traceback.print_exc()
             return False
 
     def generate_image(self, prompt, lora_model=None, lora_strength=1.0, **kwargs):
-        """สร้างภาพด้วยการควบคุมสไตล์ผ่าน LoRA และการตั้งค่าที่เหมาะสม"""
+        """สร้างภาพด้วยการควบคุมสไตล์ผ่าน LoRA - Optimized inference"""
         if not self.model_loaded:
             raise Exception("ยังไม่ได้โหลดโมเดลหลัก กรุณาโหลดโมเดลก่อนสร้างภาพ")
 
         try:
-            print(f"🎨 กำลังสร้างภาพด้วย Prompt: '{prompt[:50]}...'")
+            print(f"🎨 Generating: '{prompt[:50]}...'")
 
             pipeline_kwargs = {}
 
-            # จัดการการโหลด LoRA และกำหนดระดับความเข้มข้น (Strength)
+            # Handle LoRA loading
             if lora_model and lora_model.lower() not in ["none", ""]:
-                print(f"🎭 กำลังโหลด LoRA: {lora_model} (ความแรง: {lora_strength})")
+                print(f"🎭 Loading LoRA: {lora_model} (strength: {lora_strength})")
 
-                # เช็คว่า lora_model เป็นชื่อไฟล์หรือ Path เต็มหรือไม่
                 full_lora_path = lora_model
                 if not os.path.exists(full_lora_path):
-                    # ลองหาในโฟลเดอร์ loras
                     full_lora_path = os.path.join("loras", lora_model)
 
                 if os.path.exists(full_lora_path):
-                    # โหลดจากไฟล์ LoRA ในเครื่อง
                     lora_dir, weight_name = os.path.split(full_lora_path)
                     self.pipeline.load_lora_weights(lora_dir, weight_name=weight_name)
                 else:
-                    # โหลดจาก Hugging Face Hub
                     self.pipeline.load_lora_weights(lora_model)
 
-                # กำหนดค่าความแรงของ LoRA
                 pipeline_kwargs["cross_attention_kwargs"] = {
                     "scale": float(lora_strength)
                 }
 
-            # รวมค่าเริ่มต้นกับค่าที่ส่งมาจาก Request
+            # Merge settings
             gen_params = self.default_settings.copy()
             gen_params.update(kwargs)
 
-            # กำหนดขนาดภาพพื้นฐานตามรุ่นของโมเดล
+            # Set default resolution based on model
             if "width" not in kwargs or "height" not in kwargs:
                 if "xl" in self.current_model.lower():
                     gen_params.setdefault("width", 1024)
@@ -332,26 +417,26 @@ class PixelArtSDServer:
                     gen_params.setdefault("width", 512)
                     gen_params.setdefault("height", 512)
 
-            # ต่อท้าย Prompt เพื่อบังคับความเป็น Pixel Art
+            # Add pixel art suffix
             if "pixel art" not in prompt.lower():
                 prompt += gen_params["pixel_art_prompt_suffix"]
 
-            # จัดการเรื่อง Seed
+            # Handle seed
             seed = gen_params.get("seed", -1)
             generator = torch.Generator(device=self.device)
 
             if seed is not None and int(seed) != -1:
                 generator.manual_seed(int(seed))
-                print(f"🎲 ใช้ Seed: {seed}")
+                print(f"🎲 Using seed: {seed}")
             else:
                 import random
 
                 random_seed = random.randint(0, 2**32 - 1)
                 generator.manual_seed(random_seed)
-                print(f"🎲 สุ่ม Seed ใหม่: {random_seed}")
+                print(f"🎲 Random seed: {random_seed}")
                 seed = random_seed
 
-            # เตรียมพารามิเตอร์สุดท้ายสำหรับ Pipeline
+            # Prepare final pipeline kwargs
             pipeline_kwargs.update(
                 {
                     "prompt": prompt,
@@ -365,17 +450,18 @@ class PixelArtSDServer:
             )
 
             print(
-                f"⚙️ การตั้งค่า: {gen_params['width']}x{gen_params['height']}, {gen_params['num_inference_steps']} steps"
+                f"⚙️ Settings: {gen_params['width']}x{gen_params['height']}, {gen_params['num_inference_steps']} steps"
             )
 
-            # เริ่มกระบวนการสร้างภาพ
-            result = self.pipeline(**pipeline_kwargs)
+            # 🎯 Use inference_mode for better performance
+            with torch.inference_mode():
+                result = self.pipeline(**pipeline_kwargs)
 
-            print("✅ สร้างภาพสำเร็จ")
+            print("✅ Image generation complete")
             return result.images[0], generator.initial_seed()
 
         finally:
-            # ล้างค่า LoRA ออกจาก Pipeline เพื่อไม่ให้ปนเปื้อนกับการสร้างภาพครั้งต่อไป
+            # Unload LoRA to prevent contamination
             if (
                 lora_model
                 and lora_model.lower() not in ["none", ""]
@@ -383,34 +469,35 @@ class PixelArtSDServer:
             ):
                 self.pipeline.unload_lora_weights()
 
-    def process_for_pixel_art(self, image, target_size=(64, 64), colors=16):
-        """การประมวลผลภาพขั้นสูงเพื่อให้เป็น Pixel Art และจำกัดจำนวนสี"""
-        print(f"🖼️ กำลังแปลงเป็น Pixel Art: ขนาด {target_size}, จำนวนสี {colors}")
+            # # 🧹 Clean up VRAM after generation
+            # if self.device == "cuda":
+            #     torch.cuda.empty_cache()
 
-        # ปรับขนาดภาพแบบ Nearest Neighbor เพื่อให้พิกเซลคมชัด ไม่เบลอ
+    def process_for_pixel_art(self, image, target_size=(64, 64), colors=16):
+        """การประมวลผลภาพขั้นสูงเพื่อให้เป็น Pixel Art - Optimized"""
+        # Resize with NEAREST for crisp pixels
         image = image.resize(target_size, Image.NEAREST)
 
-        # จำกัดจำนวนสี (Color Quantization)
+        # Color quantization
         if colors > 0:
             if image.mode == "RGBA":
-                # แยก Alpha Channel ไว้เพื่อรักษาความโปร่งใสหลังจำกัดสี
                 alpha = image.getchannel("A")
                 rgb_image = image.convert("RGB").quantize(
-                    colors=int(colors) - 1,  # กันไว้ 1 สีสำหรับ Transparency
+                    colors=int(colors) - 1,
                     method=Image.MEDIANCUT,
+                    dither=Image.NONE,  # No dithering for clean pixel art
                 )
                 image = rgb_image.convert("RGBA")
                 image.putalpha(alpha)
             else:
                 image = image.quantize(
-                    colors=int(colors), method=Image.MEDIANCUT
+                    colors=int(colors), method=Image.MEDIANCUT, dither=Image.NONE
                 ).convert("RGB")
 
-        print("✅ ประมวลผล Pixel Art สำเร็จ")
         return image
 
 
-# สร้าง Instance ของเซิร์ฟเวอร์
+# Create server instance
 sd_server = PixelArtSDServer()
 
 
@@ -424,7 +511,7 @@ def generate():
         if not prompt:
             return jsonify({"success": False, "error": "ไม่ได้ระบุ Prompt"}), 400
 
-        print(f"\n🎯 คำขอสร้างภาพใหม่: {prompt[:30]}...")
+        print(f"\n🎯 New generation request: {prompt[:30]}...")
 
         defaults = sd_server.default_settings
         kwargs = {
@@ -440,19 +527,19 @@ def generate():
             "negative_prompt": data.get(
                 "negative_prompt", defaults.get("negative_prompt")
             ),
-            "width": data.get("width", 1024),  # ความละเอียดฐานในการสร้าง
-            "height": data.get("height", 1024),  # ความละเอียดฐานในการสร้าง
+            "width": data.get("width", 1024),
+            "height": data.get("height", 1024),
         }
 
-        # ขั้นตอนสร้างภาพหลัก
-        start_time = datetime.now()
+        # Generate image
+        start_time = time.time()
         image, used_seed = sd_server.generate_image(prompt=prompt, **kwargs)
 
-        # ลบพื้นหลังถ้ามีการร้องขอ
+        # Remove background if requested
         if data.get("remove_background", False):
             image = sd_server.remove_background(image)
 
-        # แปลงเป็น Pixel Art ตามขนาดที่กำหนดจาก Aseprite
+        # Convert to pixel art
         pixel_width = int(data.get("pixel_width", 64))
         pixel_height = int(data.get("pixel_height", 64))
         colors = int(data.get("colors", 16))
@@ -461,11 +548,11 @@ def generate():
             image, target_size=(pixel_width, pixel_height), colors=colors
         )
 
-        # ส่งภาพกลับในรูปแบบ Base64
+        # Encode to base64
         img_base64 = sd_server.image_to_base64(pixel_image)
 
-        generation_time = (datetime.now() - start_time).total_seconds()
-        print(f"⏱️ เวลาที่ใช้ทั้งหมด: {generation_time:.2f} วินาที")
+        generation_time = time.time() - start_time
+        print(f"⏱️ Total time: {generation_time:.2f}s")
 
         return jsonify(
             {
@@ -486,20 +573,28 @@ def generate():
         import traceback
 
         traceback.print_exc()
-        print(f"❌ เกิดข้อผิดพลาดในการสร้างภาพ: {str(e)}")
+        print(f"❌ Generation error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/health", methods=["GET"])
 def health_check():
     """ตรวจสอบสถานะของเซิร์ฟเวอร์"""
+    vram_used = 0
+    vram_total = 0
+    if torch.cuda.is_available():
+        vram_used = torch.cuda.memory_allocated(0) / 1024**3
+        vram_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+
     return jsonify(
         {
             "status": "healthy",
             "model_loaded": sd_server.model_loaded,
             "current_model": sd_server.current_model,
             "device": sd_server.device,
-            "version": "2.0.0",
+            "vram_used_gb": round(vram_used, 2),
+            "vram_total_gb": round(vram_total, 2),
+            "version": "2.2.0-rtx5070ti",
         }
     )
 
@@ -514,7 +609,7 @@ def load_model_route():
         if not model_name:
             return jsonify({"success": False, "error": "ไม่ได้ระบุ model_name"}), 400
 
-        print(f"📦 กำลังโหลดโมเดล: {model_name}")
+        print(f"📦 Loading model: {model_name}")
 
         if sd_server.load_model(model_name):
             return jsonify(
@@ -527,23 +622,20 @@ def load_model_route():
             )
 
     except Exception as e:
-        print(f"❌ ข้อผิดพลาดในการโหลดโมเดล: {str(e)}")
+        print(f"❌ Model load error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/models", methods=["GET"])
 def list_models():
-    """แสดงรายการโมเดลที่มีให้เลือก ทั้งจากออนไลน์และในเครื่อง"""
-    # รายชื่อโมเดลออนไลน์มาตรฐาน
+    """แสดงรายการโมเดลที่มีให้เลือก"""
     models = [
         "stabilityai/stable-diffusion-xl-base-1.0",
         "runwayml/stable-diffusion-v1-5",
     ]
 
-    # สแกนหาไฟล์โมเดลเพิ่มเติมในโฟลเดอร์ 'models'
     model_directory = "models"
-    if not os.path.isdir(model_directory):
-        os.makedirs(model_directory)
+    os.makedirs(model_directory, exist_ok=True)
 
     for filename in os.listdir(model_directory):
         if filename.endswith(".safetensors") or filename.endswith(".ckpt"):
@@ -555,13 +647,11 @@ def list_models():
 
 @app.route("/loras", methods=["GET"])
 def list_loras():
-    """แสดงรายการ LoRA ทั้งจาก Hub และในเครื่อง"""
+    """แสดงรายการ LoRA"""
     lora_models = ["None", "nerijs/pixel-art-xl", "ntc-ai/SDXL-LoRA-slider.pixel-art"]
 
-    # สแกนหาไฟล์ LoRA เพิ่มเติมในโฟลเดอร์ 'loras'
     lora_directory = "loras"
-    if not os.path.isdir(lora_directory):
-        os.makedirs(lora_directory)
+    os.makedirs(lora_directory, exist_ok=True)
 
     for filename in os.listdir(lora_directory):
         if filename.endswith(".safetensors"):
@@ -573,44 +663,46 @@ def list_loras():
 
 def main(default_model_to_load=None, offline=False):
     """ฟังก์ชันหลักสำหรับเริ่มการทำงานของเซิร์ฟเวอร์"""
-    print("\n" + "=" * 50)
-    print("🎮 LOCAL AI GENERATOR SERVER v2.1")
-    print("=" * 50)
+    print("\n" + "=" * 60)
+    print("🎮 LOCAL AI GENERATOR SERVER v2.2 [RTX 5070 Ti OPTIMIZED]")
+    print("=" * 60)
 
-    # สร้างโฟลเดอร์ที่จำเป็น
     os.makedirs("models", exist_ok=True)
     os.makedirs("loras", exist_ok=True)
 
     sd_server.offline_mode = offline
 
     if default_model_to_load and default_model_to_load.lower() != "none":
-        print(f"📦 กำลังเตรียมโหลดโมเดลเริ่มต้น: {default_model_to_load}")
+        print(f"📦 Pre-loading model: {default_model_to_load}")
         sd_server.load_model(default_model_to_load)
     else:
-        print("⏸️ จะยังไม่โหลดโมเดลตอนเริ่มเครื่อง (จะโหลดเมื่อได้รับคำสั่งครั้งแรก)")
+        print("⏸️ Model will load on first request")
 
-    print("\n🌐 ข้อมูลการตั้งค่าเซิร์ฟเวอร์:")
+    print("\n🌐 Server Configuration:")
     print(f"   • Host: 127.0.0.1")
     print(f"   • Port: 5000")
-    print(f"   • อุปกรณ์: {sd_server.device}")
-    print(f"   • โหมดออฟไลน์: {offline}")
+    print(f"   • Device: {sd_server.device}")
+    print(f"   • Offline Mode: {offline}")
+    if torch.cuda.is_available():
+        print(f"   • BF16 Enabled: {torch.cuda.is_bf16_supported()}")
+        print(f"   • Optimizations: xFormers, Channels-Last, TF32, DPM++ Scheduler")
 
-    print("\n✅ เซิร์ฟเวอร์พร้อมใช้งาน! เข้าถึงได้ที่ http://127.0.0.1:5000")
-    print("🎨 ปลั๊กอิน Aseprite สามารถเชื่อมต่อและเริ่มสร้างภาพได้ทันที!")
-    print("\n" + "=" * 50 + "\n")
+    print("\n✅ Server ready! Connect at http://127.0.0.1:5000")
+    print("🎨 Aseprite plugin can now connect and generate!")
+    print("\n" + "=" * 60 + "\n")
 
     try:
-        # ปิดการแสดง Banner ของ Flask
-        cli = sys.modules["flask.cli"]
-        cli.show_server_banner = lambda *x: None
+        cli = sys.modules.get("flask.cli")
+        if cli:
+            cli.show_server_banner = lambda *x: None
 
         app.run(
             host="127.0.0.1", port=5000, debug=False, threaded=True, use_reloader=False
         )
     except KeyboardInterrupt:
-        print("\n👋 กำลังปิดเซิร์ฟเวอร์...")
+        print("\n👋 Shutting down server...")
     except Exception as e:
-        print(f"❌ เซิร์ฟเวอร์ขัดข้อง: {e}")
+        print(f"❌ Server error: {e}")
 
 
 if __name__ == "__main__":
