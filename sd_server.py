@@ -33,6 +33,7 @@ from torchvision import transforms
 from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 
+
 # ปิดการแจ้งเตือนคำเตือนต่างๆ เพื่อให้ Console สะอาด
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -141,7 +142,10 @@ class PixelArtSDServer:
         return pipeline
 
     def load_segmentation_model(self):
-        if self.segmentation_model and self.segmentation_processor:
+        if (
+            self.segmentation_model is not None
+            and self.segmentation_processor is not None
+        ):
             return True
         print("📦 Loading BiRefNet for background removal...")
         try:
@@ -153,11 +157,13 @@ class PixelArtSDServer:
                         interpolation=transforms.InterpolationMode.BILINEAR,
                     ),
                     transforms.ToTensor(),
-                    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                    ),
                 ]
             )
 
-            dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+            dtype = torch.float16 if self.device == "cuda" else torch.float32
 
             self.segmentation_model = AutoModelForImageSegmentation.from_pretrained(
                 model_name,
@@ -165,20 +171,17 @@ class PixelArtSDServer:
                 local_files_only=self.offline_mode,
                 torch_dtype=dtype,
             )
-
             self.segmentation_model.to(self.device)
             self.segmentation_model.eval()
 
             if self.device == "cuda":
-                try:
-                    self.segmentation_model.to(memory_format=torch.channels_last)
-                except:
-                    pass
+                self.segmentation_model.to(memory_format=torch.channels_last)
 
-            if self.optimized_settings["use_compile"]:
+            if self.optimized_settings.get("use_compile", False):
                 print("🚀 Compiling BiRefNet with torch.compile...")
+
                 self.segmentation_model = torch.compile(
-                    self.segmentation_model, mode="reduce-overhead"
+                    self.segmentation_model, mode="reduce-overhead", fullgraph=False
                 )
             print("✅ BiRefNet loaded successfully")
             return True
@@ -188,28 +191,37 @@ class PixelArtSDServer:
 
     def remove_background(self, pil_image):
         if not self.load_segmentation_model():
-            raise Exception("ไม่สามารถโหลดโมเดลลบพื้นหลังได้")
+            raise RuntimeError("ไม่สามารถโหลดโมเดลลบพื้นหลังได้")
         print("🎭 Removing background with BiRefNet...")
         try:
             with torch.inference_mode():
                 rgb_image = pil_image.convert("RGB")
+
                 input_tensor = (
-                    self.segmentation_processor(rgb_image).unsqueeze(0).to(self.device)
+                    self.segmentation_processor(rgb_image)
+                    .unsqueeze(0)
+                    .to(self.device, non_blocking=True)
                 )
+
                 model_dtype = next(self.segmentation_model.parameters()).dtype
-                input_tensor = input_tensor.to(dtype=model_dtype)
+                input_tensor = input_tensor.to(
+                    dtype=model_dtype, memory_format=torch.channels_last
+                )
+
                 outputs = self.segmentation_model(input_tensor)
                 logits = outputs[0]
+
                 mask = F.interpolate(
                     logits,
                     size=pil_image.size[::-1],
                     mode="bilinear",
                     align_corners=False,
                 )
-                mask = torch.sigmoid(mask).squeeze()
-                binary_mask = (mask > 0.4).cpu().numpy().astype(np.uint8)
-            mask_image = Image.fromarray(binary_mask * 255, mode="L")
-            # mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=1))
+                binary_mask = (torch.sigmoid(mask) > 0.4).squeeze()
+
+                mask_np = (binary_mask * 255).to(torch.uint8).cpu().numpy()
+
+            mask_image = Image.fromarray(mask_np, mode="L")
             rgba_image = pil_image.convert("RGBA")
             rgba_image.putalpha(mask_image)
             print("✅ Background removal complete")
@@ -458,7 +470,7 @@ class PixelArtSDServer:
         if colors > 0:
             dither_mode = Image.FLOYDSTEINBERG if use_dithering else Image.NONE
             image = image.quantize(
-                colors=colors, method=Image.MEDIANCUT, dither=dither_mode
+                colors=colors, method=Image.FASTOCTREE, dither=dither_mode
             ).convert("RGB")
         if alpha is not None:
             alpha = alpha.resize(target_size, Image.NEAREST)
@@ -475,9 +487,15 @@ sd_server = PixelArtSDServer()
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
+        if not data:
+            return (
+                jsonify({"success": False, "error": "Invalid or missing JSON payload"}),
+                400,
+            )
+
         prompt = data.get("prompt")
-        if not prompt:
+        if not prompt or not str(prompt).strip():
             return jsonify({"success": False, "error": "ไม่ได้ระบุ Prompt"}), 400
 
         print(f"\n🎯 New generation request: {prompt[:30]}...")
@@ -498,21 +516,23 @@ def generate():
                 )
 
         defaults = sd_server.default_settings
+
         kwargs = {
             "lora_model": data.get("lora_model"),
-            "lora_strength": data.get("lora_strength", 1.0),
-            "num_inference_steps": data.get(
-                "steps", defaults.get("num_inference_steps")
+            "lora_strength": max(0.0, min(2.0, float(data.get("lora_strength", 1.0)))),
+            "num_inference_steps": max(
+                1, min(50, int(data.get("steps", defaults["num_inference_steps"])))
             ),
-            "guidance_scale": data.get(
-                "guidance_scale", defaults.get("guidance_scale")
+            "guidance_scale": max(
+                1.0,
+                min(
+                    20.0, float(data.get("guidance_scale", defaults["guidance_scale"]))
+                ),
             ),
-            "seed": data.get("seed", -1),
-            "negative_prompt": data.get(
-                "negative_prompt", defaults.get("negative_prompt")
-            ),
-            "width": data.get("width", 1024),
-            "height": data.get("height", 1024),
+            "seed": int(data.get("seed", -1)),
+            "negative_prompt": data.get("negative_prompt", defaults["negative_prompt"]),
+            "width": max(256, min(2048, int(data.get("width", 1024)))),
+            "height": max(256, min(2048, int(data.get("height", 1024)))),
         }
 
         start_time = time.time()
@@ -521,18 +541,16 @@ def generate():
         if data.get("remove_background", False):
             image = sd_server.remove_background(image)
 
-        pixel_width = int(data.get("pixel_width", 64))
-        pixel_height = int(data.get("pixel_height", 64))
-        colors = int(data.get("colors", 16))
+        pixel_width = max(16, min(512, int(data.get("pixel_width", 64))))
+        pixel_height = max(16, min(512, int(data.get("pixel_height", 64))))
+        colors = max(2, min(256, int(data.get("colors", 16))))
+
         pixel_image = sd_server.process_for_pixel_art(
             image, target_size=(pixel_width, pixel_height), colors=colors
         )
 
         img_base64 = sd_server.image_to_base64(pixel_image)
         generation_time = time.time() - start_time
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         print(f"⏱️ Total time: {generation_time:.2f}s")
         return jsonify(
@@ -561,6 +579,14 @@ def generate():
                 ),
                 503,
             )
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        print(f"❌ Generation error: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/health", methods=["GET"])
