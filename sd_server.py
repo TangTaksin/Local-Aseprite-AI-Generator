@@ -58,14 +58,9 @@ class PixelArtSDServer:
         self.model_cache = {}
         self.offline_mode = False
         self.default_model = default_model
-
-        # ✅ [FIX 1] LoRA State Caching
         self._current_lora = None
         self._current_lora_strength = None
-
-        # ✅ [FIX 3] Generation Lock for Thread Safety
         self._generation_lock = threading.Lock()
-
         is_windows = platform.system() == "Windows"
         self.use_compile = False if is_windows else True
 
@@ -131,7 +126,7 @@ class PixelArtSDServer:
         if self.optimized_settings["use_compile"]:
             print("   🚀 Compiling U-Net with torch.compile...")
             pipeline.unet = torch.compile(
-                pipeline.unet, mode="reduce-overhead", fullgraph=True, dynamic=True
+                pipeline.unet, mode="max-autotune", fullgraph=False, dynamic=False
             )
         if model_type == "sdxl" and hasattr(pipeline, "scheduler"):
             try:
@@ -154,27 +149,34 @@ class PixelArtSDServer:
             self.segmentation_processor = transforms.Compose(
                 [
                     transforms.Resize(
-                        (352, 352), interpolation=transforms.InterpolationMode.BILINEAR
+                        (1024, 1024),
+                        interpolation=transforms.InterpolationMode.BILINEAR,
                     ),
                     transforms.ToTensor(),
                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
                 ]
             )
+
+            dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
             self.segmentation_model = AutoModelForImageSegmentation.from_pretrained(
                 model_name,
                 trust_remote_code=True,
                 local_files_only=self.offline_mode,
-                torch_dtype=(
-                    torch.float16 if torch.cuda.is_available() else torch.float32
-                ),
+                torch_dtype=dtype,
             )
-            self.segmentation_model.to(self.device).eval()
+
+            self.segmentation_model.to(self.device)
+            self.segmentation_model.eval()
+
             if self.device == "cuda":
                 try:
                     self.segmentation_model.to(memory_format=torch.channels_last)
                 except:
                     pass
+
             if self.optimized_settings["use_compile"]:
+                print("🚀 Compiling BiRefNet with torch.compile...")
                 self.segmentation_model = torch.compile(
                     self.segmentation_model, mode="reduce-overhead"
                 )
@@ -205,8 +207,9 @@ class PixelArtSDServer:
                     align_corners=False,
                 )
                 mask = torch.sigmoid(mask).squeeze()
-                binary_mask = (mask > 0.5).cpu().numpy().astype(np.uint8)
+                binary_mask = (mask > 0.4).cpu().numpy().astype(np.uint8)
             mask_image = Image.fromarray(binary_mask * 255, mode="L")
+            # mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=1))
             rgba_image = pil_image.convert("RGBA")
             rgba_image.putalpha(mask_image)
             print("✅ Background removal complete")
@@ -215,7 +218,6 @@ class PixelArtSDServer:
             print(f"❌ Error during background removal: {e}")
             return pil_image.convert("RGBA")
 
-    # ✅ [FIX 2] PNG Compression instead of Raw Bytes
     def image_to_base64(self, image, format="PNG"):
         """
         PNG ดีกว่า raw bytes สำหรับ pixel art เพราะ:
@@ -301,7 +303,6 @@ class PixelArtSDServer:
                 print("🔥 Running warmup inference...")
                 try:
                     with torch.inference_mode():
-                        # ✅ [QUICK WIN] Warmup steps 1→3 เพื่อให้ torch.compile path ครบ
                         _ = self.pipeline(
                             prompt="pixel",
                             width=512 if not is_sdxl else 1024,
@@ -325,7 +326,6 @@ class PixelArtSDServer:
             traceback.print_exc()
             return False
 
-    # ✅ [FIX 1] LoRA Switching Logic
     def _switch_lora(self, lora_model, lora_strength):
         needs_load = (
             lora_model != self._current_lora
@@ -359,21 +359,16 @@ class PixelArtSDServer:
         if not self.model_loaded:
             raise Exception("ยังไม่ได้โหลดโมเดลหลัก กรุณาโหลดโมเดลก่อนสร้างภาพ")
 
-        # ✅ [FIX 3] Thread-safe Generation Lock
         if not self._generation_lock.acquire(blocking=False):
-            raise Exception("Server กำลัง generate อยู่ กรุณารอสักครู่ (Queue full)")
+            raise RuntimeError("Server busy")
 
         try:
             print(f"🎨 Generating: '{prompt[:50]}...'")
-
-            # ✅ โหลดเฉพาะเมื่อเปลี่ยน LoRA จริงๆ
             self._switch_lora(lora_model, lora_strength)
 
             pipeline_kwargs = {}
             if lora_model and str(lora_model).lower() not in ["none", "", "null"]:
-                pipeline_kwargs["cross_attention_kwargs"] = {
-                    "scale": float(lora_strength)
-                }
+                pipeline_kwargs["lora_scale"] = float(lora_strength)
 
             gen_params = self.default_settings.copy()
             gen_params.update(kwargs)
@@ -424,7 +419,6 @@ class PixelArtSDServer:
             print("✅ Image generation complete")
             return result.images[0], generator.initial_seed()
         finally:
-            # ✅ ปลด Lock เสมอ แม้จะเกิด Exception
             self._generation_lock.release()
 
     def process_for_pixel_art(
@@ -468,6 +462,7 @@ class PixelArtSDServer:
             ).convert("RGB")
         if alpha is not None:
             alpha = alpha.resize(target_size, Image.NEAREST)
+            alpha = alpha.point(lambda p: 255 if p >= alpha_threshold else 0)
             image = image.convert("RGBA")
             image.putalpha(alpha)
         print("✅ ประมวลผล Pixel Art สำเร็จ (คมชัด + สีสันสดใส)")
@@ -536,7 +531,6 @@ def generate():
         img_base64 = sd_server.image_to_base64(pixel_image)
         generation_time = time.time() - start_time
 
-        # ✅ [FIX 4] Clear CUDA Cache เพื่อลด VRAM Fragmentation สะสม
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -548,19 +542,25 @@ def generate():
                     "base64": img_base64,
                     "width": pixel_width,
                     "height": pixel_height,
-                    "mode": "png",  # ✅ เปลี่ยนจาก rgba เป็น png เพื่อให้ Client รู้ว่าต้อง decode PNG
+                    "mode": "png",
                 },
                 "seed": used_seed,
                 "prompt": prompt,
                 "generation_time": generation_time,
             }
         )
-    except Exception as e:
-        import traceback
 
-        traceback.print_exc()
-        print(f"❌ Generation error: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+    except RuntimeError as e:
+        if "Server busy" in str(e):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Server is generating another image. Please retry.",
+                    }
+                ),
+                503,
+            )
 
 
 @app.route("/health", methods=["GET"])
@@ -659,7 +659,7 @@ def main(default_model_to_load=None, offline=False):
         if cli:
             cli.show_server_banner = lambda *x: None
         app.run(
-            host="127.0.0.1", port=5000, debug=False, threaded=True, use_reloader=False
+            host="127.0.0.1", port=5000, debug=False, threaded=False, use_reloader=False
         )
     except KeyboardInterrupt:
         print("\n👋 Shutting down server...")
