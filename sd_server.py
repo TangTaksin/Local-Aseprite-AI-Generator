@@ -33,7 +33,6 @@ from torchvision import transforms
 from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 
-
 # ปิดการแจ้งเตือนคำเตือนต่างๆ เพื่อให้ Console สะอาด
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -111,26 +110,64 @@ class PixelArtSDServer:
     def _optimize_pipeline_for_blackwell(self, pipeline, model_type="sdxl"):
         if self.device != "cuda":
             return pipeline
-        print(f"🎯 Optimizing {model_type.upper()} pipeline for RTX 5070 Ti...")
-        dtype = torch.bfloat16 if self.optimized_settings["use_bf16"] else torch.float16
-        pipeline = pipeline.to(self.device, dtype=dtype)
+
+        print(
+            f"🎯 Optimizing {model_type.upper()} pipeline for RTX 5070 Ti (Blackwell + cu132)..."
+        )
+
+        # 1. TF32 & cuDNN Benchmark
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+
+        # 2. Dtype
+        dtype = (
+            torch.bfloat16
+            if self.optimized_settings.get("use_bf16", True)
+            else torch.float16
+        )
+        pipeline.to(self.device, dtype=dtype)
+
+        # 3. Channels Last
+        try:
+            pipeline.unet.to(memory_format=torch.channels_last)
+            if hasattr(pipeline, "vae"):
+                pipeline.vae.to(memory_format=torch.channels_last)
+        except Exception as e:
+            print(f"   ⚠️ Channels last fallback: {e}")
+
+        # 4. Attention (Native SDPA)
         try:
             if hasattr(pipeline, "disable_attention_slicing"):
                 pipeline.disable_attention_slicing()
-        except:
+        except Exception:
             pass
+
+        # 5. VAE Memory Management
         try:
             pipeline.enable_vae_slicing()
             pipeline.enable_vae_tiling()
-        except:
+        except Exception:
             pass
-        if self.optimized_settings["use_compile"]:
-            print("   🚀 Compiling U-Net with torch.compile...")
-            pipeline.unet = torch.compile(
-                pipeline.unet, mode="max-autotune", fullgraph=False, dynamic=False
-            )
+
+        # 6. Torch Compile
+        if self.optimized_settings.get("use_compile", False):
+            print("   🚀 Compiling U-Net with torch.compile (default)...")
+            try:
+                pipeline.unet = torch.compile(
+                    pipeline.unet,
+                    mode="reduce-overhead",
+                    fullgraph=False,
+                    dynamic=False
+                )
+            except Exception as e:
+                print(f"   ⚠️ U-Net compile skipped: {e}")
+
+        # 7. SDXL Scheduler
         if model_type == "sdxl" and hasattr(pipeline, "scheduler"):
             try:
+                from diffusers import DPMSolverMultistepScheduler
+
                 pipeline.scheduler = DPMSolverMultistepScheduler.from_config(
                     pipeline.scheduler.config,
                     algorithm_type="sde-dpmsolver++",
@@ -425,11 +462,13 @@ class PixelArtSDServer:
                 f"⚙️ Settings: {gen_params['width']}x{gen_params['height']}, {gen_params['num_inference_steps']} steps"
             )
 
+
             with torch.inference_mode():
                 result = self.pipeline(**pipeline_kwargs)
 
             print("✅ Image generation complete")
             return result.images[0], generator.initial_seed()
+
         finally:
             self._generation_lock.release()
 
