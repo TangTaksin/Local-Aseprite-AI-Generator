@@ -6,6 +6,7 @@
 """
 
 # pyright: reportMissingImports=false
+# pyright: reportPrivateImportUsage=false
 from diffusers.utils import logging as diffusers_logging
 import logging
 import os
@@ -235,12 +236,11 @@ class PixelArtSDServer:
                 model_name,
                 trust_remote_code=True,
                 local_files_only=self.offline_mode,
-                torch_dtype=(
+                dtype=(
                     torch.float16 if torch.cuda.is_available() else torch.float32
                 ),
             )
 
-            # --- FIX: Type narrow for Pylance ---
             if self.segmentation_model is None:
                 raise RuntimeError("Failed to initialize segmentation_model")
 
@@ -356,7 +356,6 @@ class PixelArtSDServer:
                     else torch.float16
                 )
                 
-                # --- FIX: Type narrow for Pylance ---
                 if self.pipeline is not None:
                     self.pipeline.to(self.device, dtype=dtype)
 
@@ -428,7 +427,6 @@ class PixelArtSDServer:
             )
 
             # Warmup
-            # --- FIX: Type narrow for Pylance ---
             if self.device == "cuda" and self.pipeline is not None:
                 print("🔥 Running warmup inference...")
                 try:
@@ -583,9 +581,13 @@ class PixelArtSDServer:
         if image.mode in ("RGBA", "LA", "PA", "P"):
             try:
                 temp_image = image.convert("RGBA")
-                # --- FIX: Use intermediate variable for Pylance ---
                 extracted_alpha = temp_image.getchannel("A")
-                alpha = extracted_alpha.point(lambda p: 255 if p >= alpha_threshold else 0)
+                
+                # --- FIX: Use a lookup table (LUT) instead of a lambda to resolve Pylance typing ---
+                # A 256-element list covers all 8-bit pixel values, and runs much faster natively in Pillow
+                lut = [255 if i >= alpha_threshold else 0 for i in range(256)]
+                alpha = extracted_alpha.point(lut)
+                
                 image = temp_image.convert("RGB")
             except Exception as e:
                 print(f"⚠️ Warning processing alpha: {e}")
@@ -604,16 +606,16 @@ class PixelArtSDServer:
                 )
             )
 
-        image = image.resize(target_size, Image.NEAREST)
+        image = image.resize(target_size, Image.NEAREST)  # type: ignore
 
         if colors > 0:
-            dither_mode = Image.FLOYDSTEINBERG if use_dithering else Image.NONE
+            dither_mode = Image.FLOYDSTEINBERG if use_dithering else Image.NONE  # type: ignore
             image = image.quantize(
-                colors=colors, method=Image.MEDIANCUT, dither=dither_mode
+                colors=colors, method=Image.MEDIANCUT, dither=dither_mode  # type: ignore
             ).convert("RGB")
 
         if alpha is not None:
-            alpha = alpha.resize(target_size, Image.NEAREST)
+            alpha = alpha.resize(target_size, Image.NEAREST)  # type: ignore
             image = image.convert("RGBA")
             image.putalpha(alpha)
 
@@ -696,7 +698,7 @@ def generate() -> Tuple[Any, int]:
             "seed": used_seed,
             "prompt": prompt,
             "generation_time": generation_time,
-        })
+        }), 200
 
     except Exception as e:
         import traceback
@@ -745,7 +747,7 @@ def load_model_route() -> Tuple[Any, int]:
                 "model": model_name,
                 "device": sd_server.device,
                 "cached_models": list(sd_server.model_cache.keys()),
-            })
+            }), 200
         else:
             return (
                 jsonify({"success": False, "error": f"ไม่สามารถโหลด {model_name} ได้"}),
